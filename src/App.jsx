@@ -1,8 +1,8 @@
-import  { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Lock } from "lucide-react";
 import { GOLD, CARD, TEXT, BG, MUTED, THEME_VARS, THEME_ORDER, btnGold, btnGhost, FONT_IMPORT } from "./theme";
 import { LS_KEYS, loadSet, loadList, loadStr, saveSet, saveList } from "./utils/storage";
-import { TRENDING, TOP_RATED, NEW_RELEASES, MOVIES_BY_ID } from "./data/movies";
+import { getTrending, getTopRated, getNowPlaying, getGenreList, discoverByGenre, getMovieBasic } from "./services/tmdb";
 import { PageLoader } from "./components/PageLoader";
 import { LightSweep, JourneyToast } from "./components/Effects";
 import { Navbar } from "./components/Navbar";
@@ -24,11 +24,33 @@ import { MobileBottomNav } from "./components/MobileBottomNav";
 export default function CineviaApp() {
   const [loading, setLoading] = useState(true);
   const [contentReady, setContentReady] = useState(false);
+  const [loadError, setLoadError] = useState(null);
   const [scrolled, setScrolled] = useState(false);
   const [theme, setTheme] = useState(() => loadStr(LS_KEYS.theme, "dark"));
   const [sweepKey, setSweepKey] = useState(0);
   const fireSweep = useCallback(() => setSweepKey((k) => k + 1), []);
 
+  // ---- Live TMDB data --------------------------------------------------
+  const [trendingMovies, setTrendingMovies] = useState([]);
+  const [topRatedMovies, setTopRatedMovies] = useState([]);
+  const [newReleaseMovies, setNewReleaseMovies] = useState([]);
+  const [genreList, setGenreList] = useState([]);
+  const [collectionMovies, setCollectionMovies] = useState([]);
+
+  // Every movie object we've ever fetched, keyed by id. This is what lets
+  // Library/Continue-Exploring show real data for a movie without needing
+  // a static "all movies" list — TMDB data only exists once you've fetched it.
+  const [movieCache, setMovieCache] = useState({});
+  const cacheMovies = useCallback((movies) => {
+    if (!movies || movies.length === 0) return;
+    setMovieCache((prev) => {
+      const next = { ...prev };
+      movies.forEach((m) => { next[m.id] = m; });
+      return next;
+    });
+  }, []);
+
+  // ---- Persisted state (ids only) --------------------------------------
   const [favorites, setFavorites] = useState(() => loadSet(LS_KEYS.favorites));
   const [watchlist, setWatchlist] = useState(() => loadSet(LS_KEYS.watchlist));
   const [watched, setWatched] = useState(() => loadSet(LS_KEYS.watched));
@@ -37,10 +59,26 @@ export default function CineviaApp() {
   useEffect(() => saveSet(LS_KEYS.watchlist, watchlist), [watchlist]);
   useEffect(() => saveSet(LS_KEYS.watched, watched), [watched]);
   useEffect(() => saveList(LS_KEYS.recent, recentIds), [recentIds]);
+
+  // On startup, fetch full data for any saved ids that aren't in the cache
+  // yet (e.g. a favorite from last session that isn't in today's Trending).
+  // Without this, Library would show those as missing until they happened
+  // to reappear in a fetched list.
+  useEffect(() => {
+    const allSavedIds = new Set([...favorites, ...watchlist, ...watched, ...recentIds]);
+    const missingIds = [...allSavedIds].filter((id) => !movieCache[id]);
+    if (missingIds.length === 0) return;
+    let cancelled = false;
+    Promise.all(missingIds.map((id) => getMovieBasic(id).catch(() => null))).then((movies) => {
+      if (!cancelled) cacheMovies(movies.filter(Boolean));
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // only on mount — subsequent favorites/etc. are cached at the moment they're added
   useEffect(() => { try { localStorage.setItem(LS_KEYS.theme, theme); } catch { /* storage unavailable — ignore */ } }, [theme]);
 
-  const [background, setBackground] = useState("grid"); // grid | search | library | genre | category
-  const [activeGenre, setActiveGenre] = useState(null);
+  const [background, setBackground] = useState("grid"); // grid | search | library | genre | category | profile
+  const [activeGenre, setActiveGenre] = useState(null); // { id, name }
   const [activeCategory, setActiveCategory] = useState(null);
   const [overlay, setOverlay] = useState(null); // null | opening | details | closing
   const [activeMovie, setActiveMovie] = useState(null);
@@ -49,11 +87,44 @@ export default function CineviaApp() {
   const [showJourneyToast, setShowJourneyToast] = useState(false);
   const WATCHLIST_FREE_CAP = 3;
 
+  // ---- Fetch home page data on mount -----------------------------------
   useEffect(() => {
-    const t1 = setTimeout(() => { setLoading(false); fireSweep(); }, 1700);
-    const t2 = setTimeout(() => setContentReady(true), 2500);
-    return () => { clearTimeout(t1); clearTimeout(t2); };
-  }, [fireSweep]);
+    let cancelled = false;
+    const minLoader = new Promise((resolve) => setTimeout(resolve, 1200));
+
+    async function load() {
+      try {
+        const [trending, topRated, nowPlaying, genres] = await Promise.all([
+          getTrending(), getTopRated(), getNowPlaying(), getGenreList(),
+        ]);
+        if (cancelled) return;
+        setTrendingMovies(trending);
+        setTopRatedMovies(topRated);
+        setNewReleaseMovies(nowPlaying);
+        setGenreList(genres);
+        cacheMovies([...trending, ...topRated, ...nowPlaying]);
+
+        // Featured Collection: highest-rated Science Fiction titles
+        const scifi = genres.find((g) => g.name === "Science Fiction");
+        if (scifi) {
+          const collection = await discoverByGenre(scifi.id, "vote_average.desc");
+          if (!cancelled) { setCollectionMovies(collection.slice(0, 8)); cacheMovies(collection); }
+        }
+      } catch (err) {
+        if (!cancelled) setLoadError(err.message);
+      }
+    }
+
+    Promise.all([minLoader, load()]).then(() => {
+      if (cancelled) return;
+      setLoading(false);
+      setContentReady(true);
+      fireSweep();
+    });
+
+    return () => { cancelled = true; };
+  }, [fireSweep, cacheMovies]);
+
   useEffect(() => { const onScroll = () => setScrolled(window.scrollY > 40); window.addEventListener("scroll", onScroll); return () => window.removeEventListener("scroll", onScroll); }, []);
 
   const cycleTheme = useCallback(() => setTheme((t) => THEME_ORDER[(THEME_ORDER.indexOf(t) + 1) % THEME_ORDER.length]), []);
@@ -72,11 +143,12 @@ export default function CineviaApp() {
   }), []);
 
   const handleSelect = useCallback((movie, rect) => {
+    cacheMovies([movie]);
     setActiveMovie(movie); setOriginRect(rect); setOverlay("opening");
     document.body.style.overflow = "hidden";
     setRecentIds((prev) => [movie.id, ...prev.filter((id) => id !== movie.id)].slice(0, 8));
     setTimeout(() => { setOverlay("details"); document.body.style.overflow = "auto"; window.scrollTo(0, 0); }, 640);
-  }, []);
+  }, [cacheMovies]);
   const handleBack = useCallback(() => {
     document.body.style.overflow = "hidden"; setOverlay("closing");
     setTimeout(() => { setOverlay(null); setActiveMovie(null); document.body.style.overflow = "auto"; fireSweep(); }, 380);
@@ -84,7 +156,7 @@ export default function CineviaApp() {
 
   const handleSearchOpen = useCallback(() => { setBackground("search"); window.scrollTo(0, 0); fireSweep(); }, [fireSweep]);
   const handleLibraryOpen = useCallback(() => { setBackground("library"); window.scrollTo(0, 0); fireSweep(); }, [fireSweep]);
-  const handleGenreOpen = useCallback((g) => { setActiveGenre(g); setBackground("genre"); window.scrollTo(0, 0); fireSweep(); }, [fireSweep]);
+  const handleGenreOpen = useCallback((id, name) => { setActiveGenre({ id, name }); setBackground("genre"); window.scrollTo(0, 0); fireSweep(); }, [fireSweep]);
   const handleCategoryOpen = useCallback((title, movies) => { setActiveCategory({ title, movies }); setBackground("category"); window.scrollTo(0, 0); fireSweep(); }, [fireSweep]);
   const handleProfileOpen = useCallback(() => { setBackground("profile"); window.scrollTo(0, 0); fireSweep(); }, [fireSweep]);
   const handleBackgroundClose = useCallback(() => { setBackground("grid"); window.scrollTo(0, 0); fireSweep(); }, [fireSweep]);
@@ -100,9 +172,10 @@ export default function CineviaApp() {
   const showBackground = overlay === null || overlay === "opening" || overlay === "closing";
   const dimmed = overlay === "opening" || overlay === "closing";
   const tv = THEME_VARS[theme] || THEME_VARS.dark;
+  const recentMovies = recentIds.map((id) => movieCache[id]).filter(Boolean);
 
   return (
-    <div style={{ background: BG, minHeight: "100vh", color: TEXT, "--cinevia-bg": tv.bg, "--cinevia-card": tv.card, "--cinevia-text": tv.text, "--cinevia-muted": tv.muted }}>
+    <div style={{ background: BG, minHeight: "100vh", width: "100%", overflowX: "hidden", color: TEXT, "--cinevia-bg": tv.bg, "--cinevia-card": tv.card, "--cinevia-text": tv.text, "--cinevia-muted": tv.muted }}>
       <style>{`
         ${FONT_IMPORT}
         * { box-sizing: border-box; }
@@ -140,36 +213,42 @@ export default function CineviaApp() {
       <LightSweep trigger={sweepKey} />
       <JourneyToast visible={showJourneyToast} />
 
+      {loadError && !loading && (
+        <div style={{ position: "fixed", top: 12, left: "50%", transform: "translateX(-50%)", zIndex: 99, background: "rgba(178,58,46,0.92)", color: "#fff", padding: "10px 18px", borderRadius: 10, fontFamily: "Manrope, sans-serif", fontSize: 13, maxWidth: "90vw", textAlign: "center" }}>
+          Couldn't load movies from TMDB: {loadError}. Check your API key in .env and reload.
+        </div>
+      )}
+
       {showBackground && (
         <div style={{ opacity: dimmed ? 0.25 : 1, filter: dimmed ? "blur(6px)" : "none", transition: "opacity 420ms ease, filter 420ms ease" }}>
           {background === "grid" && (
             <>
               <Navbar scrolled={scrolled} theme={theme} cycleTheme={cycleTheme} onSearchClick={handleSearchOpen} onLibraryClick={handleLibraryOpen} onNavigate={handleNavigate} />
-              <Hero onSelect={handleSelect} onSlideChange={fireSweep} />
+              <Hero movies={trendingMovies.slice(0, 5)} onSelect={handleSelect} onSlideChange={fireSweep} />
               <div style={{ paddingTop: 56 }}>
-                {recentIds.length > 0 && <MovieRow eyebrow="Pick up where you left off" title="Continue Exploring" movies={recentIds.map((id) => MOVIES_BY_ID[id]).filter(Boolean)} onSelect={handleSelect} favorites={favorites} toggleFavorite={toggleFavorite} onViewAll={handleCategoryOpen} />}
-                <MovieRow id="section-trending" eyebrow="Right now" title="Trending Movies" movies={TRENDING} onSelect={handleSelect} favorites={favorites} toggleFavorite={toggleFavorite} loading={!contentReady} onViewAll={handleCategoryOpen} />
+                {recentMovies.length > 0 && <MovieRow eyebrow="Pick up where you left off" title="Continue Exploring" movies={recentMovies} onSelect={handleSelect} favorites={favorites} toggleFavorite={toggleFavorite} onViewAll={handleCategoryOpen} />}
+                <MovieRow id="section-trending" eyebrow="Right now" title="Trending Movies" movies={trendingMovies} onSelect={handleSelect} favorites={favorites} toggleFavorite={toggleFavorite} loading={!contentReady} onViewAll={handleCategoryOpen} />
                 <SprocketDivider />
-                <MovieRow eyebrow="Critically acclaimed" title="Top Rated" movies={TOP_RATED} onSelect={handleSelect} favorites={favorites} toggleFavorite={toggleFavorite} loading={!contentReady} onViewAll={handleCategoryOpen} />
+                <MovieRow eyebrow="Critically acclaimed" title="Top Rated" movies={topRatedMovies} onSelect={handleSelect} favorites={favorites} toggleFavorite={toggleFavorite} loading={!contentReady} onViewAll={handleCategoryOpen} />
                 <SprocketDivider />
-                <MovieRow eyebrow="Just landed" title="New Releases" movies={NEW_RELEASES} onSelect={handleSelect} favorites={favorites} toggleFavorite={toggleFavorite} loading={!contentReady} onViewAll={handleCategoryOpen} />
-                <GenresGrid onOpenGenre={handleGenreOpen} />
-                <FeaturedCollection onSelect={handleSelect} favorites={favorites} toggleFavorite={toggleFavorite} />
+                <MovieRow eyebrow="Just landed" title="New Releases" movies={newReleaseMovies} onSelect={handleSelect} favorites={favorites} toggleFavorite={toggleFavorite} loading={!contentReady} onViewAll={handleCategoryOpen} />
+                <GenresGrid genres={genreList} onOpenGenre={handleGenreOpen} />
+                <FeaturedCollection movies={collectionMovies} onSelect={handleSelect} favorites={favorites} toggleFavorite={toggleFavorite} />
                 <Newsletter />
                 <Footer />
               </div>
             </>
           )}
-          {background === "search" && <SearchView onBack={handleBackgroundClose} onSelect={handleSelect} favorites={favorites} toggleFavorite={toggleFavorite} />}
-          {background === "library" && <LibraryView onBack={handleBackgroundClose} onSelect={handleSelect} favorites={favorites} toggleFavorite={toggleFavorite} watchlist={watchlist} watched={watched} recentIds={recentIds} />}
-          {background === "genre" && <GenreView genre={activeGenre} onBack={handleBackgroundClose} onSelect={handleSelect} favorites={favorites} toggleFavorite={toggleFavorite} />}
+          {background === "search" && <SearchView onBack={handleBackgroundClose} onSelect={handleSelect} favorites={favorites} toggleFavorite={toggleFavorite} genreList={genreList} cacheMovies={cacheMovies} />}
+          {background === "library" && <LibraryView onBack={handleBackgroundClose} onSelect={handleSelect} favorites={favorites} toggleFavorite={toggleFavorite} watchlist={watchlist} watched={watched} recentIds={recentIds} movieCache={movieCache} />}
+          {background === "genre" && activeGenre && <GenreView key={activeGenre.id} genreId={activeGenre.id} genreName={activeGenre.name} onBack={handleBackgroundClose} onSelect={handleSelect} favorites={favorites} toggleFavorite={toggleFavorite} cacheMovies={cacheMovies} />}
           {background === "category" && activeCategory && <CategoryView title={activeCategory.title} movies={activeCategory.movies} onBack={handleBackgroundClose} onSelect={handleSelect} favorites={favorites} toggleFavorite={toggleFavorite} />}
           {background === "profile" && <ProfileView onBack={handleBackgroundClose} onOpenLibrary={handleLibraryOpen} favorites={favorites} watchlist={watchlist} watched={watched} theme={theme} cycleTheme={cycleTheme} />}
         </div>
       )}
 
       {(overlay === "opening" || overlay === "closing") && activeMovie && originRect && <FlyingBackdrop movie={activeMovie} originRect={originRect} mode={overlay === "opening" ? "opening" : "closing"} />}
-      {overlay === "details" && activeMovie && <DetailsView movie={activeMovie} onBack={handleBack} favorites={favorites} toggleFavorite={toggleFavorite} watchlist={watchlist} toggleWatchlist={toggleWatchlist} watched={watched} toggleWatched={toggleWatched} />}
+      {overlay === "details" && activeMovie && <DetailsView key={activeMovie.id} movie={activeMovie} onBack={handleBack} favorites={favorites} toggleFavorite={toggleFavorite} watchlist={watchlist} toggleWatchlist={toggleWatchlist} watched={watched} toggleWatched={toggleWatched} cacheMovies={cacheMovies} />}
 
       <MobileBottomNav active={background === "grid" ? "home" : background} onHome={() => { setBackground("grid"); fireSweep(); }} onSearch={handleSearchOpen} onLibrary={handleLibraryOpen} onProfile={handleProfileOpen} />
 
@@ -187,4 +266,3 @@ export default function CineviaApp() {
     </div>
   );
 }
-

@@ -1,24 +1,35 @@
-import  { useState } from "react";
+import { useState } from "react";
 import { GOLD, TEXT, MUTED, CARD, btnGold } from "../theme";
-import { GRADIENTS, GENRES, COLLECTION } from "../data/movies";
 import { Reveal } from "./Reveal";
 import { MovieCard } from "./MovieCard";
 
+const CARD_GRADIENTS = [
+  "linear-gradient(160deg,#3a1c1c,#0a0c12)",
+  "linear-gradient(160deg,#1c2b3a,#0a0c12)",
+  "linear-gradient(160deg,#2b1c3a,#0a0c12)",
+  "linear-gradient(160deg,#1c3a2e,#0a0c12)",
+  "linear-gradient(160deg,#3a2e1c,#0a0c12)",
+  "linear-gradient(160deg,#3a1c33,#0a0c12)",
+];
+
 /* ------------------------------------------------------------------ */
 /*  Genres + Collection + Newsletter + Footer                          */
+/*  `genres` (array of {id,name}) and `collectionMovies` come from     */
+/*  App.jsx, which fetches them from TMDB.                             */
 /* ------------------------------------------------------------------ */
-export function GenresGrid({ onOpenGenre }) {
+export function GenresGrid({ genres, onOpenGenre }) {
+  if (!genres || genres.length === 0) return null;
   return (
     <Reveal>
       <section id="section-genres" style={{ padding: "0 5vw", marginBottom: 56 }}>
         <div style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: GOLD, marginBottom: 4 }}>Browse</div>
         <h2 style={{ fontFamily: "Fraunces, serif", fontSize: 28, fontWeight: 600, color: TEXT, margin: "0 0 20px" }}>Genres</h2>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px,1fr))", gap: 14 }}>
-          {GENRES.slice(0, 8).map((g, i) => (
-            <div key={g} className="cinevia-card-sweep" onClick={() => onOpenGenre(g)} style={{ background: GRADIENTS[i % GRADIENTS.length], border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, padding: "26px 18px", cursor: "pointer", transition: "transform 220ms" }}
+          {genres.slice(0, 8).map((g, i) => (
+            <div key={g.id} className="cinevia-card-sweep" onClick={() => onOpenGenre(g.id, g.name)} style={{ background: CARD_GRADIENTS[i % CARD_GRADIENTS.length], border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, padding: "26px 18px", cursor: "pointer", transition: "transform 220ms" }}
               onMouseEnter={(e) => (e.currentTarget.style.transform = "translateY(-3px)")}
               onMouseLeave={(e) => (e.currentTarget.style.transform = "translateY(0)")}>
-              <div style={{ fontFamily: "Fraunces, serif", fontSize: 19, fontWeight: 600, color: "#F3F1EA" }}>{g}</div>
+              <div style={{ fontFamily: "Fraunces, serif", fontSize: 19, fontWeight: 600, color: "#F3F1EA" }}>{g.name}</div>
             </div>
           ))}
         </div>
@@ -26,7 +37,8 @@ export function GenresGrid({ onOpenGenre }) {
     </Reveal>
   );
 }
-export function FeaturedCollection({ onSelect, favorites, toggleFavorite }) {
+export function FeaturedCollection({ movies, onSelect, favorites, toggleFavorite }) {
+  if (!movies || movies.length === 0) return null;
   return (
     <Reveal>
       <section id="section-collections" style={{ padding: "0 5vw", marginBottom: 56 }}>
@@ -36,7 +48,7 @@ export function FeaturedCollection({ onSelect, favorites, toggleFavorite }) {
           <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 14, color: "#9AA0AE", marginTop: 10, maxWidth: 480 }}>Vast, quiet, and a little terrifying — the definitive films for staring into the dark.</p>
         </div>
         <div style={{ display: "flex", gap: 18, overflowX: "auto", paddingBottom: 8 }}>
-          {COLLECTION.map((m) => <MovieCard key={m.id} movie={m} onSelect={onSelect} favorites={favorites} toggleFavorite={toggleFavorite} />)}
+          {movies.map((m) => <MovieCard key={m.id} movie={m} onSelect={onSelect} favorites={favorites} toggleFavorite={toggleFavorite} />)}
         </div>
       </section>
     </Reveal>
@@ -64,9 +76,9 @@ export function Newsletter() {
 export function Footer() {
   return (
     <footer style={{ padding: "40px 5vw 96px", display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 20 }}>
-      <div style={{ fontFamily: "Fraunces, serif", fontWeight: 600, fontSize: 19, color: TEXT }}>Zynx<span style={{ color: GOLD }}>Movies</span></div>
+      <div style={{ fontFamily: "Fraunces, serif", fontWeight: 600, fontSize: 19, color: TEXT }}>Cine<span style={{ color: GOLD }}>via</span></div>
       <div style={{ display: "flex", gap: 24, flexWrap: "wrap", fontFamily: "Manrope, sans-serif", fontSize: 13, color: "#8C8E9B" }}><span>About</span><span>Privacy</span><span>Terms</span><span>DMCA</span><span>Contact</span></div>
-      <div style={{ fontFamily: "Manrope, sans-serif", fontSize: 13, color: "#8C8E9B" }}>© 2026 ZynxMovies</div>
+      <div style={{ fontFamily: "Manrope, sans-serif", fontSize: 13, color: "#8C8E9B" }}>© 2026 Cinevia</div>
     </footer>
   );
 }

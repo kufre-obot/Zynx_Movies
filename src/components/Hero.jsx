@@ -1,15 +1,17 @@
-import  { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Play, Info, Star, ChevronLeft, ChevronRight } from "lucide-react";
 import { GOLD, btnGold, btnGhost } from "../theme";
-import { HERO_MOVIES, accentOf } from "../data/movies";
+import { accentOf } from "../services/movieUtils";
 import { GenreChip } from "./UIBits";
 import { Particles } from "./Effects";
 
 /* ------------------------------------------------------------------ */
 /*  Hero — arrows, swipe, segmented progress bar, mouse-follow glow    */
 /*  + parallax, floating particles, slow zoom                          */
+/*  `movies` is passed in from App.jsx (fetched from TMDB there)       */
 /* ------------------------------------------------------------------ */
-export function Hero({ onSelect, onSlideChange }) {
+export function Hero({ movies, onSelect, onSlideChange }) {
+  const HERO_MOVIES = movies;
   const [index, setIndex] = useState(0);
   const [tick, setTick] = useState(0); // restarts the progress-bar animation
   const [mouse, setMouse] = useState({ x: 0.5, y: 0.5 });
@@ -20,17 +22,21 @@ export function Hero({ onSelect, onSlideChange }) {
   const goTo = useCallback((i) => {
     setIndex(((i % HERO_MOVIES.length) + HERO_MOVIES.length) % HERO_MOVIES.length);
     setTick((t) => t + 1);
-  }, []);
+  }, [HERO_MOVIES.length]);
   const next = useCallback(() => goTo(index + 1), [index, goTo]);
   const prev = useCallback(() => goTo(index - 1), [index, goTo]);
 
   useEffect(() => {
+    if (!HERO_MOVIES || HERO_MOVIES.length === 0) return;
     clearInterval(timerRef.current);
     timerRef.current = setInterval(() => setIndex((i) => { const n = (i + 1) % HERO_MOVIES.length; return n; }), 9000);
     return () => clearInterval(timerRef.current);
-  }, [tick]);
+  }, [tick, HERO_MOVIES]);
 
   useEffect(() => { if (isFirst.current) { isFirst.current = false; return; } onSlideChange && onSlideChange(); }, [index, onSlideChange]);
+
+  // All hooks above run unconditionally on every render — safe to bail out now.
+  if (!HERO_MOVIES || HERO_MOVIES.length === 0) return null;
 
   const movie = HERO_MOVIES[index];
   const accent = accentOf(movie.bg);

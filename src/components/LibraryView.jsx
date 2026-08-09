@@ -1,21 +1,22 @@
-import  { useState } from "react";
+import { useState } from "react";
 import { ChevronLeft } from "lucide-react";
 import { GOLD, TEXT, MUTED, iconBtn } from "../theme";
-import { MOVIES_BY_ID } from "../data/movies";
 import { MovieCard } from "./MovieCard";
 import { Footer } from "./HomeSections";
 
 /* ------------------------------------------------------------------ */
 /*  Library page                                                       */
+/*  `movieCache` (id -> movie object) comes from App.jsx, populated as  */
+/*  movies get fetched from TMDB — there's no static "all movies" list. */
 /* ------------------------------------------------------------------ */
-export function LibraryView({ onBack, onSelect, favorites, toggleFavorite, watchlist, watched, recentIds }) {
+export function LibraryView({ onBack, onSelect, favorites, toggleFavorite, watchlist, watched, recentIds, movieCache }) {
   const [tab, setTab] = useState("recent");
   const TABS = [{ key: "recent", label: "Recently Viewed" }, { key: "favorites", label: "Favorites" }, { key: "watchlist", label: "Watchlist" }, { key: "watched", label: "Watched" }];
   const listFor = {
-    recent: recentIds.map((id) => MOVIES_BY_ID[id]).filter(Boolean),
-    favorites: [...favorites].map((id) => MOVIES_BY_ID[id]).filter(Boolean),
-    watchlist: [...watchlist].map((id) => MOVIES_BY_ID[id]).filter(Boolean),
-    watched: [...watched].map((id) => MOVIES_BY_ID[id]).filter(Boolean),
+    recent: recentIds.map((id) => movieCache[id]).filter(Boolean),
+    favorites: [...favorites].map((id) => movieCache[id]).filter(Boolean),
+    watchlist: [...watchlist].map((id) => movieCache[id]).filter(Boolean),
+    watched: [...watched].map((id) => movieCache[id]).filter(Boolean),
   }[tab];
   const emptyCopy = { recent: "Movies you open will show up here.", favorites: "Tap the heart on any movie to save it here.", watchlist: "Add movies to your watchlist from their details page.", watched: "Mark a movie as watched to start your journey." }[tab];
 

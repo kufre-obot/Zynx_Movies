@@ -1,33 +1,64 @@
-import  { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Search, X, ChevronLeft, SlidersHorizontal, TrendingUp } from "lucide-react";
 import { GOLD, TEXT, MUTED, CARD, iconBtn } from "../theme";
-import { ALL_MOVIES, GENRES, TRENDING_SEARCHES, searchableText } from "../data/movies";
+import { searchMovies, discoverByGenre, getPopular } from "../services/tmdb";
 import { GenreChip } from "./UIBits";
 import { MovieCard } from "./MovieCard";
 import { Footer } from "./HomeSections";
 
+const TRENDING_SEARCHES = ["sci-fi", "2026", "horror", "batman", "top rated", "animation"];
+
 /* ------------------------------------------------------------------ */
-/*  Search page — now matches title, genres, actors, and directors     */
+/*  Search page — live TMDB search (title) + genre discover, debounced */
+/*  `genreList` (array of {id,name}) comes from App.jsx.               */
 /* ------------------------------------------------------------------ */
-export function SearchView({ onBack, onSelect, favorites, toggleFavorite }) {
+export function SearchView({ onBack, onSelect, favorites, toggleFavorite, genreList, cacheMovies }) {
   const [query, setQuery] = useState("");
   const [activeGenres, setActiveGenres] = useState(new Set());
   const [sort, setSort] = useState("rating");
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [results, setResults] = useState([]);
+  const [popular, setPopular] = useState([]);
+  const [searching, setSearching] = useState(false);
   const inputRef = useRef(null);
+
   useEffect(() => { inputRef.current && inputRef.current.focus(); }, []);
-  const toggleGenre = (g) => setActiveGenres((prev) => { const next = new Set(prev); next.has(g) ? next.delete(g) : next.add(g); return next; });
+  useEffect(() => { getPopular().then((movies) => { setPopular(movies.slice(0, 8)); cacheMovies(movies); }).catch(() => {}); }, [cacheMovies]);
+
+  const toggleGenre = (id) => setActiveGenres((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
   const isSearching = query.trim().length > 0 || activeGenres.size > 0;
 
-  const results = useMemo(() => {
-    let list = ALL_MOVIES.filter((m) => {
-      const matchesQuery = query.trim() === "" || searchableText(m).includes(query.trim().toLowerCase());
-      const matchesGenre = activeGenres.size === 0 || m.genres.some((g) => activeGenres.has(g));
-      return matchesQuery && matchesGenre;
-    });
-    return [...list].sort((a, b) => (sort === "rating" ? b.rating - a.rating : b.year - a.year));
-  }, [query, activeGenres, sort]);
-  const popular = useMemo(() => [...ALL_MOVIES].sort((a, b) => b.rating - a.rating).slice(0, 8), []);
+  // Debounced fetch — waits 400ms after typing stops before hitting TMDB
+  useEffect(() => {
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      if (cancelled) return;
+      if (!isSearching) { setResults([]); setSearching(false); return; }
+      setSearching(true);
+      try {
+        let movies;
+        if (query.trim()) {
+          movies = await searchMovies(query.trim());
+          if (activeGenres.size > 0) {
+            const activeNames = new Set((genreList || []).filter((g) => activeGenres.has(g.id)).map((g) => g.name));
+            movies = movies.filter((m) => m.genres.some((name) => activeNames.has(name)));
+          }
+        } else {
+          const genreIds = [...activeGenres].join("|");
+          movies = await discoverByGenre(genreIds, sort === "rating" ? "vote_average.desc" : "primary_release_date.desc");
+        }
+        if (cancelled) return;
+        movies = [...movies].sort((a, b) => (sort === "rating" ? b.rating - a.rating : b.year - a.year));
+        setResults(movies);
+        cacheMovies(movies);
+      } catch {
+        if (!cancelled) setResults([]);
+      } finally {
+        if (!cancelled) setSearching(false);
+      }
+    }, 400);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [query, activeGenres, sort, isSearching, cacheMovies, genreList]);
 
   return (
     <div>
@@ -36,14 +67,14 @@ export function SearchView({ onBack, onSelect, favorites, toggleFavorite }) {
           <button style={iconBtn} onClick={onBack} aria-label="Back"><ChevronLeft size={20} color={TEXT} /></button>
           <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, background: CARD, border: "1px solid rgba(255,255,255,0.14)", borderRadius: 10, padding: "10px 14px" }}>
             <Search size={16} color={MUTED} />
-            <input ref={inputRef} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search titles, genres, actors, directors..." style={{ flex: 1, background: "none", border: "none", outline: "none", color: TEXT, fontFamily: "Manrope, sans-serif", fontSize: 15 }} />
+            <input ref={inputRef} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search movie titles..." style={{ flex: 1, background: "none", border: "none", outline: "none", color: TEXT, fontFamily: "Manrope, sans-serif", fontSize: 15 }} />
             {query && <button style={{ ...iconBtn, padding: 0 }} onClick={() => setQuery("")}><X size={15} color={MUTED} /></button>}
           </div>
           <button style={{ ...iconBtn, background: filtersOpen ? "rgba(232,181,74,0.15)" : "none", borderRadius: 8 }} onClick={() => setFiltersOpen((v) => !v)} aria-label="Filters"><SlidersHorizontal size={18} color={filtersOpen ? GOLD : TEXT} /></button>
         </div>
         {filtersOpen && (
           <div style={{ maxWidth: 760, margin: "16px auto 0" }}>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>{GENRES.map((g) => <GenreChip key={g} active={activeGenres.has(g)} onClick={() => toggleGenre(g)}>{g}</GenreChip>)}</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>{(genreList || []).map((g) => <GenreChip key={g.id} active={activeGenres.has(g.id)} onClick={() => toggleGenre(g.id)}>{g.name}</GenreChip>)}</div>
             <div style={{ display: "flex", gap: 8, fontFamily: "Manrope, sans-serif", fontSize: 12 }}>
               <button onClick={() => setSort("rating")} style={{ ...iconBtn, padding: "5px 10px", borderRadius: 8, color: sort === "rating" ? GOLD : MUTED, fontWeight: 700 }}>Top Rated</button>
               <button onClick={() => setSort("year")} style={{ ...iconBtn, padding: "5px 10px", borderRadius: 8, color: sort === "year" ? GOLD : MUTED, fontWeight: 700 }}>Newest</button>
@@ -66,8 +97,10 @@ export function SearchView({ onBack, onSelect, favorites, toggleFavorite }) {
         )}
         {isSearching && (
           <section style={{ marginBottom: 40 }}>
-            <h2 style={{ fontFamily: "Fraunces, serif", fontSize: 20, fontWeight: 600, color: TEXT, marginBottom: 20 }}>{results.length} result{results.length !== 1 ? "s" : ""} {query && <span style={{ color: MUTED, fontWeight: 400 }}>for "{query}"</span>}</h2>
-            {results.length === 0 ? <p style={{ fontFamily: "Manrope, sans-serif", color: MUTED }}>No movies match that search yet — try a different title, genre, actor, or director.</p> : (
+            <h2 style={{ fontFamily: "Fraunces, serif", fontSize: 20, fontWeight: 600, color: TEXT, marginBottom: 20 }}>
+              {searching ? "Searching…" : `${results.length} result${results.length !== 1 ? "s" : ""}`} {query && <span style={{ color: MUTED, fontWeight: 400 }}>for "{query}"</span>}
+            </h2>
+            {!searching && results.length === 0 ? <p style={{ fontFamily: "Manrope, sans-serif", color: MUTED }}>No movies match that search yet — try a different title or genre.</p> : (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 18 }}>{results.map((m) => <MovieCard key={m.id} movie={m} onSelect={onSelect} favorites={favorites} toggleFavorite={toggleFavorite} fixedWidth={false} />)}</div>
             )}
           </section>
